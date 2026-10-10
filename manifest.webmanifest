@@ -1,0 +1,12 @@
+{
+  "id": "/lvcc-switch/",
+  "name": "充电空位",
+  "short_name": "充电空位",
+  "description": "微信提醒、充电插座动态状态与查询开关",
+  "lang": "zh-CN",
+  "start_url": "/lvcc-switch/",
+  "scope": "/lvcc-switch/",
+  "display": "standalone",
+  "background_color": "#f3f6f2",
+  "theme_color": "#173226"
+}

@@ -74,6 +74,8 @@
       && timestamp(value) <= Date.now() + 5000;
     const timeText = value => Number.isFinite(timestamp(value))
       ? new Date(value).toLocaleString("zh-CN", {timeZone: "Asia/Taipei", hour12: false}) : "无有效检测时间";
+    const clockText = value => Number.isFinite(timestamp(value))
+      ? new Date(value).toLocaleTimeString("zh-CN", {timeZone: "Asia/Taipei", hour12: false}) : "未确认";
 
     function clearTimers() {
       clearTimeout(pollTimer); clearTimeout(expiryTimer);
@@ -110,22 +112,24 @@
     }
 
     function render() {
+      $("results").hidden = !connected;
+      $("target-list").hidden = !connected;
       $("results-refresh").disabled = !connected || invalidLink || !selected || !!inFlight;
-      $("result-scope").textContent = pinned
-        ? "本条提醒对应的插座；上方开关控制当前正在运行的查询。"
-        : "最近一次查询发现的插座；上方开关控制当前正在运行的查询。";
+      $("result-scope").textContent = pinned ? "本条提醒 · 固定查看" : "最近一次查询";
       $("result-groups").replaceChildren();
+      $("result-summary").textContent = ""; $("result-summary").hidden = true;
       $("result-updated").textContent = "";
+      $("result-note").textContent = "";
       $("result-state").className = "result-banner result-warning";
       if (invalidLink || !connected || !selected) {
         $("result-state").textContent = invalidLink ? "结果链接不完整" : !connected ? "连接后查看结果" : latestKnown ? "暂无监控记录" : "正在查找监控记录";
-        $("result-message").textContent = invalidLink ? "请从微信提醒重新打开。为避免显示其他查询的结果，这里不会切换到最新记录。"
-          : !connected ? "请先连接专用凭据。旧消息仍会固定查看原会话，不会替换为最新监控。" : "尚未找到可展示的监控会话。";
+        $("result-message").textContent = invalidLink ? "请从微信提醒重新打开。不会切换到其他查询。"
+          : !connected ? "请先连接专用凭据。" : "开启查询后，这里会显示结果。";
         return;
       }
       if (!snapshot) {
         $("result-state").textContent = failure ? "尚无可确认的结果" : "正在读取本次结果";
-        $("result-message").textContent = failure || "正在核对会话及插座状态。";
+        $("result-message").textContent = failure || "";
         return;
       }
       const sameAttempt = runState?.run_attempt === selected.attempt;
@@ -135,30 +139,45 @@
       const verified = snapshot.verification ? "验证运行 · " : "";
       let state, explanation;
       if (failure) {
-        state = "状态未知"; explanation = failure + " 当前插座状态未确认，请勿依据上次空闲记录前往。";
+        state = "状态未知"; explanation = "暂未确认当前空位，请稍后刷新。";
       } else if (!tracking) {
         state = snapshot.phase === "searching" && !snapshot.cohort.length && runState?.status === "in_progress" && sameAttempt
-          ? "尚未开始跟踪" : "已停止更新 · 仅供查看历史";
-        explanation = !sameAttempt ? "这是较早一次的记录，跟踪已结束。"
-          : "以下为本次保存的最后状态，不代表插座现在仍然空闲。";
+          ? "正在查找空位" : "已停止更新 · 历史记录";
+        explanation = state === "正在查找空位" ? "发现空位后会发微信。" : !sameAttempt ? "这是较早一次的记录，跟踪已结束。"
+          : "最后保存的状态，不代表现在仍然空闲。";
       } else if (!sessionFresh) {
-        state = "数据已过期 · 状态未知"; explanation = "超过 30 秒未获得新结果，不能确认当前空位。";
+        state = "数据已过期 · 状态未知"; explanation = "超过 30 秒没更新，当前空位未知。";
       } else {
-        state = "正在跟踪这次发现的插座";
-        explanation = `仅跟踪本条提醒最初发现的插座，直到 ${timeText(snapshot.tracking_until)}；后来出现的新空位不会加入。`;
+        state = `跟踪中 · ${clockText(snapshot.tracking_until)} 结束`;
+        explanation = "";
         $("result-state").className = "result-banner result-current";
       }
       $("result-state").textContent = verified + state;
       const notificationText = notifications[snapshot.notification]
         + (snapshot.notification === "uncertain" && tracking ? "，网页继续跟踪" : "");
-      $("result-message").textContent = `${explanation} ${notificationText}。${snapshot.message ? " " + snapshot.message : ""}`;
-      $("result-updated").textContent = `结果更新时间：${timeText(snapshot.updated_at)}${sessionFresh ? "" : "（已过期）"}`;
-      if (!snapshot.cohort.length) $("result-groups").append(element("p", "minor", "尚无本次提醒对应的插座记录。"));
-      for (const device of snapshot.cohort) {
+      $("result-message").textContent = [explanation, snapshot.notification === "uncertain" ? notificationText : ""].filter(Boolean).join(" ");
+      $("result-note").textContent = [failure, notificationText, snapshot.message].filter(Boolean).join(" ");
+      $("result-updated").textContent = `更新于 ${timeText(snapshot.updated_at)}${sessionFresh ? "" : "（已过期）"}`;
+      const validCurrent = port => tracking && !failure && sessionFresh && fresh(port.checked_at) && !port.error;
+      const available = port => validCurrent(port) && port.status === "free";
+      if (tracking && !failure && sessionFresh) {
+        const counts = {free: 0, occupied: 0, fault: 0, disabled: 0};
+        for (const device of snapshot.cohort) for (const port of device.ports) {
+          if (validCurrent(port) && Object.hasOwn(counts, port.status)) counts[port.status]++;
+        }
+        $("result-summary").textContent = Object.entries(counts).filter(([, count]) => count)
+          .map(([status, count]) => `${count} 个${labels[status]}`).join(" · ") || "暂无可确认的插座状态";
+        $("result-summary").hidden = false;
+      }
+      const devices = snapshot.cohort.map((device, index) => ({device, index, available: device.ports.some(available)}))
+        .sort((a, b) => Number(b.available) - Number(a.available) || a.index - b.index);
+      for (const {device} of devices) {
         const group = element("section", "result-device");
         group.append(element("h3", "result-device-name", device.name));
         const list = element("ul", "port-results");
-        for (const port of device.ports) {
+        const ports = device.ports.map((port, index) => ({port, index}))
+          .sort((a, b) => Number(available(b.port)) - Number(available(a.port)) || a.index - b.index);
+        for (const {port} of ports) {
           const row = element("li", "port-result"), stale = !sessionFresh || !fresh(port.checked_at);
           let status = port.status, text = labels[status], className = "port-state";
           if (failure || port.error) { status = "unknown"; text = "未知 · 暂未确认"; }
@@ -166,7 +185,7 @@
           else if (stale) { status = "unknown"; text = "未知 · 数据已过期"; }
           else className += " port-" + status;
           row.append(element("span", "port-number", `${port.number} 号插座`), element("strong", className, text));
-          row.append(element("span", "port-time", `检测更新：${timeText(port.checked_at)}`));
+          row.append(element("span", "port-time", `更新 ${tracking && !stale ? clockText(port.checked_at) : timeText(port.checked_at)}`));
           if (typeof port.error === "string" && port.error) row.append(element("span", "port-error", port.error));
           list.append(row);
         }
@@ -251,7 +270,7 @@
 
   function controls(known) {
     $("start").disabled = !connected || !known || busy || (!!pendingStart && !pendingStart.retryAllowed) || active.length > 0 || stopping;
-    $("start").textContent = pendingStart?.retryAllowed ? "重新尝试开启" : "开启查询";
+    $("start").textContent = pendingStart?.retryAllowed ? "重试开启" : "开启";
     $("stop").disabled = !connected || !known || busy || active.length === 0 || stopping;
     $("minutes").disabled = busy || active.length > 0 || !!pendingStart;
   }
@@ -276,22 +295,25 @@
       }
       knownRuns = new Set(watches.map(run => run.id));
       if (stopping && active.length === 0) stopping = false;
+      $("detail").hidden = false;
       if (stopping) {
         $("state").textContent = "正在关闭";
         $("detail").textContent = "已请求停止，正在等待 GitHub 确认。";
       } else if (pendingStart) {
         $("state").textContent = pendingStart.retryAllowed ? "未确认启动" : "正在确认启动";
         $("detail").textContent = pendingStart.retryAllowed
-          ? "已超过 90 秒，仍未找到本次任务。可点击“重新尝试开启”手动重试；系统不会自动重发。"
+          ? "超过 90 秒仍未找到任务。可点击“重试开启”，不会自动重发。"
           : "等待 GitHub 创建任务。暂时不要重复点击。";
       } else if (active.length) {
         const running = active.some(run => run.status === "in_progress");
         $("state").textContent = running ? "监控运行中" : "等待 GitHub 启动";
         $("detail").textContent = running ? "发现空位发一次微信，并继续跟踪这些插座 15 分钟。" : "任务已提交，GitHub 正在排队分配运行环境。";
+        $("detail").hidden = running;
       } else {
         $("state").textContent = "已关闭";
         const failed = watches[0]?.conclusion === "failure";
         $("detail").textContent = failed ? "上一轮异常结束，请查看微信绑定或任务记录。" : "当前没有正在运行的查询。";
+        $("detail").hidden = !failed;
       }
       $("message").textContent = "";
       controls(true);
@@ -351,6 +373,7 @@
     const pending = {at: Date.now(), seenIds: new Set(knownRuns), retryAllowed: false};
     pendingStart = pending; controls(true);
     $("state").textContent = "正在提交开启";
+    $("detail").hidden = false;
     $("detail").textContent = "正在向 GitHub 发送开启请求，任务尚未确认启动。";
     $("message").textContent = "";
     try {
@@ -378,6 +401,7 @@
     const connection = connectionVersion, runs = active.slice();
     refreshVersion++; busy = true; controls(true); let actionError = "";
     $("state").textContent = "正在提交关闭";
+    $("detail").hidden = false;
     $("detail").textContent = "正在向 GitHub 发送停止请求，任务尚未确认停止。";
     $("message").textContent = "";
     try {

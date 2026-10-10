@@ -4,49 +4,55 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#28744a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="充电空位">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-  <title>充电提醒开关</title>
-  <link rel="stylesheet" href="style.css?v=20261010-3">
-  <script src="app.js?v=20261010-3" defer></script>
+  <title>充电空位</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css?v=20261010-4">
+  <script src="app.js?v=20261010-4" defer></script>
 </head>
 <body><main>
-  <p class="brand">充电提醒</p>
-  <h1>有空位了，<br>微信告诉你。</h1>
-  <p class="intro">发现空位提醒一次，再跟踪这次发现的插座 15 分钟。</p>
+  <header class="page-header"><h1>充电空位</h1></header>
   <section class="card" id="connect-panel">
-    <h2>首次连接</h2>
-    <p>连接后可以在微信里直接开关，不需要电脑在线。</p>
+    <h2>连接后查看插座</h2>
     <label for="access-key">专用连接凭据</label>
     <input id="access-key" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_ 开头">
     <label class="check"><input id="remember" type="checkbox">在这台设备上记住连接</label>
-    <button id="connect">连接监控</button>
-    <p class="minor">此凭据只应授权 lvcc-alert 仓库的 Actions 读写与 Contents 只读。请勿填写微信推送密钥或其他仓库的凭据。</p>
+    <button id="connect">连接并查看</button>
+    <p class="minor">仅使用 lvcc-alert 仓库的专用凭据（Actions 读写、Contents 只读），不要填写微信推送密钥。</p>
   </section>
-  <section class="card" id="control-panel" hidden>
-    <h2 class="control-title">当前监控开关</h2>
-    <div class="pill" id="state">正在核对状态</div>
-    <label for="minutes">这次最多等多久</label>
-    <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
-    <div class="actions"><button id="start" disabled>开启查询</button><button id="stop" class="secondary" disabled>关闭查询</button></div>
-    <p id="detail" class="minor"></p>
-    <details class="targets-details" id="target-list">
-      <summary id="target-summary">监控设备名单</summary>
-      <div id="targets"></div>
-    </details>
-    <button id="refresh" class="text-button">刷新开关状态</button>
-    <button id="disconnect" class="text-button">断开此设备的连接</button>
+  <section class="monitor-bar" id="control-panel" aria-label="当前查询开关" hidden>
+    <div class="control-row">
+      <div class="control-status"><span class="minor">当前查询</span><span class="pill" id="state">正在核对</span></div>
+      <div class="actions"><button id="start" disabled>开启</button><button id="stop" class="secondary" disabled>关闭</button></div>
+    </div>
+    <p id="detail" class="minor" hidden></p>
   </section>
   <p id="message" role="status" aria-live="polite"></p>
-  <section class="card results-card" id="results" aria-labelledby="results-heading">
-    <h2 id="results-heading">这次发现的插座</h2>
-    <p class="minor" id="result-scope"></p>
+  <section class="card results-card" id="results" aria-labelledby="results-heading" hidden>
+    <h2 class="sr-only" id="results-heading">这次插座状态</h2>
+    <div class="result-head"><p class="minor" id="result-scope"></p><button class="text-button" id="results-refresh" disabled>刷新</button></div>
+    <p class="results-summary" id="result-summary" hidden></p>
     <p class="result-banner result-warning" id="result-state" role="status" aria-live="polite">连接后查看结果</p>
     <p class="minor" id="result-message"></p>
-    <div id="result-groups"></div>
     <p class="minor" id="result-updated"></p>
-    <button class="text-button" id="results-refresh" disabled>刷新这次结果</button>
-    <p class="minor">只跟踪这条提醒最初发现的具体插座，不加入后来的新空位。页面自动刷新；状态同步通常会有十几秒延迟，超过 30 秒没更新会标为过期。</p>
+    <div id="result-groups"></div>
   </section>
-  <p class="footer">运行后约每 5 秒批量查询，有空位再核实具体插座。提醒写明完整桩名与插座编号，随后继续跟踪 15 分钟，不再重复提醒。<br>GitHub 启动可能排队；关闭按钮控制当前监控，以任务确认停止为准。结果停止更新后仅供查看历史。</p>
+  <details class="card settings" id="target-list" hidden>
+    <summary>设置</summary>
+    <label for="minutes">开启后最多等待多久</label>
+    <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
+    <p class="settings-label" id="target-summary">监控设备名单</p>
+    <div id="targets"></div>
+    <button id="refresh" class="text-button">刷新当前查询状态</button>
+    <button id="disconnect" class="text-button">断开此设备</button>
+    <p class="minor">关闭按钮停止当前查询；旧消息始终显示原来的记录。关闭网页不会停止查询。</p>
+    <p class="minor">发现空位提醒一次，再跟踪这条提醒最初发现的插座 15 分钟，不加入新的空位。</p>
+    <p class="minor">页面自动刷新；状态同步通常会有十几秒延迟，超过 30 秒没更新会标为过期。GitHub 启动可能排队。</p>
+    <p class="minor">桌面直达：Safari → 分享 → 添加到主屏幕。</p>
+    <p class="minor" id="result-note"></p>
+  </details>
 </main></body>
 </html>
