@@ -8,10 +8,23 @@
   let key = sessionStorage.getItem(KEY_NAME) || localStorage.getItem(KEY_NAME) || "";
   let active = [], connected = false, busy = false, pendingStart = null, stopping = false;
   let connectionVersion = 0, refreshVersion = 0, knownRuns = new Set(), refreshInFlight = null;
+  let refreshTimer = null;
   const requests = new Set();
+
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+    if (!connected || document.hidden) return;
+    const transitioning = pendingStart || stopping || active.some(run => run.status !== "in_progress");
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      if (!document.hidden) refresh();
+    }, transitioning ? 3000 : 10000);
+  }
 
   function invalidateConnection() {
     connectionVersion++; refreshVersion++;
+    clearTimeout(refreshTimer); refreshTimer = null;
     for (const request of requests) request.abort();
     connected = false; busy = false; active = []; stopping = false;
     controls(false);
@@ -90,7 +103,12 @@
       $("state").textContent = "状态暂不明";
       $("message").textContent = error.message;
       controls(false);
-    } finally { if (refreshInFlight === ticket) refreshInFlight = null; }
+    } finally {
+      if (refreshInFlight === ticket) {
+        refreshInFlight = null;
+        scheduleRefresh();
+      }
+    }
   }
 
   async function connect(save, candidate = key) {
@@ -109,6 +127,8 @@
         const item = document.createElement("p"); item.className = "target"; item.textContent = target.name;
         $("targets").append(item);
       }
+      $("target-summary").textContent = `监控 ${targets.length} 台充电桩 · 查看名单`;
+      $("target-list").open = false;
       connected = true;
       if (save) {
         sessionStorage.setItem(KEY_NAME, candidate);
@@ -132,9 +152,16 @@
     refreshVersion++; busy = true; let actionError = "";
     const pending = {at: Date.now(), seenIds: new Set(knownRuns), retryAllowed: false};
     pendingStart = pending; controls(true);
+    $("state").textContent = "正在提交开启";
+    $("detail").textContent = "正在向 GitHub 发送开启请求，任务尚未确认启动。";
+    $("message").textContent = "";
     try {
       const result = await api(WORKFLOW + "/dispatches", "POST", {ref: "main", inputs: {mode: "开始监控", minutes: $("minutes").value}});
-      if (connection === connectionVersion) pending.id = result?.workflow_run_id;
+      if (connection === connectionVersion) {
+        pending.id = result?.workflow_run_id;
+        $("state").textContent = "正在确认启动";
+        $("detail").textContent = "开启请求已提交，正在等待 GitHub 创建任务。";
+      }
     } catch (error) {
       if (connection === connectionVersion) {
         actionError = error.message;
@@ -152,12 +179,19 @@
     if (!connected || busy || !active.length) return;
     const connection = connectionVersion, runs = active.slice();
     refreshVersion++; busy = true; controls(true); let actionError = "";
+    $("state").textContent = "正在提交关闭";
+    $("detail").textContent = "正在向 GitHub 发送停止请求，任务尚未确认停止。";
+    $("message").textContent = "";
     try {
       for (const run of runs) {
         if (connection !== connectionVersion) return;
         await api(`/actions/runs/${run.id}/cancel`, "POST");
       }
-      if (connection === connectionVersion) stopping = true;
+      if (connection === connectionVersion) {
+        stopping = true;
+        $("state").textContent = "正在关闭";
+        $("detail").textContent = "已请求停止，正在等待 GitHub 确认。";
+      }
     } catch (error) { if (connection === connectionVersion) actionError = error.message; }
     finally {
       if (connection === connectionVersion) {
@@ -175,6 +209,9 @@
     $("connect-panel").hidden = false; $("control-panel").hidden = true;
     $("message").textContent = "已断开本设备连接。这不会停止正在运行的查询。";
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { clearTimeout(refreshTimer); refreshTimer = null; }
+    else refresh();
+  });
   if (key) connect(false);
-  setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 })();

@@ -6,8 +6,8 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>充电提醒开关</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="style.css?v=20261010-2">
+  <script src="app.js?v=20261010-2" defer></script>
 </head>
 <body><main>
   <p class="brand">充电提醒</p>
@@ -24,15 +24,18 @@
   </section>
   <section class="card" id="control-panel" hidden>
     <div class="pill" id="state">正在核对状态</div>
-    <div id="targets"></div>
     <label for="minutes">这次最多等多久</label>
     <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
     <div class="actions"><button id="start" disabled>开启查询</button><button id="stop" class="secondary" disabled>关闭查询</button></div>
     <p id="detail" class="minor"></p>
+    <details class="targets-details" id="target-list">
+      <summary id="target-summary">监控设备名单</summary>
+      <div id="targets"></div>
+    </details>
     <button id="refresh" class="text-button">刷新开关状态</button>
     <button id="disconnect" class="text-button">断开此设备的连接</button>
   </section>
   <p id="message" role="status" aria-live="polite"></p>
-  <p class="footer">运行后每 5 秒查一次。提醒会写明完整充电桩名称、全部空闲插座编号和检测时间。<br>GitHub 启动可能排队；关闭按钮以任务确认停止为准。</p>
+  <p class="footer">运行后约每 5 秒批量查询，有空位再核实具体插座。提醒会写明完整充电桩名称、全部空闲插座编号和检测时间。<br>GitHub 启动可能排队；关闭按钮以任务确认停止为准。</p>
 </main></body>
 </html>
