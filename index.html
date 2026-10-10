@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>充电提醒开关</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body><main>
+  <p class="brand">充电提醒</p>
+  <h1>有空位了，<br>微信告诉你。</h1>
+  <p class="intro">开启后自动查询，发现空位发一次提醒就结束。</p>
+  <section class="card" id="connect-panel">
+    <h2>首次连接</h2>
+    <p>连接后可以在微信里直接开关，不需要电脑在线。</p>
+    <label for="access-key">专用连接凭据</label>
+    <input id="access-key" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_ 开头">
+    <label class="check"><input id="remember" type="checkbox">在这台设备上记住连接</label>
+    <button id="connect">连接监控</button>
+    <p class="minor">此凭据只应授权 lvcc-alert 仓库的 Actions 读写与 Contents 只读。请勿填写微信推送密钥或其他仓库的凭据。</p>
+  </section>
+  <section class="card" id="control-panel" hidden>
+    <div class="pill" id="state">正在核对状态</div>
+    <div id="targets"></div>
+    <label for="minutes">这次最多等多久</label>
+    <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
+    <div class="actions"><button id="start" disabled>开启查询</button><button id="stop" class="secondary" disabled>关闭查询</button></div>
+    <p id="detail" class="minor"></p>
+    <button id="refresh" class="text-button">刷新开关状态</button>
+    <button id="disconnect" class="text-button">断开此设备的连接</button>
+  </section>
+  <p id="message" role="status" aria-live="polite"></p>
+  <p class="footer">运行后每 5 秒查一次。提醒会写明完整充电桩名称、全部空闲插座编号和检测时间。<br>GitHub 启动可能排队；关闭按钮以任务确认停止为准。</p>
+</main></body>
+</html>
