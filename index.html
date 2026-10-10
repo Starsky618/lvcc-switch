@@ -6,13 +6,13 @@
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>充电提醒开关</title>
-  <link rel="stylesheet" href="style.css?v=20261010-2">
-  <script src="app.js?v=20261010-2" defer></script>
+  <link rel="stylesheet" href="style.css?v=20261010-3">
+  <script src="app.js?v=20261010-3" defer></script>
 </head>
 <body><main>
   <p class="brand">充电提醒</p>
   <h1>有空位了，<br>微信告诉你。</h1>
-  <p class="intro">开启后自动查询，发现空位发一次提醒就结束。</p>
+  <p class="intro">发现空位提醒一次，再跟踪这次发现的插座 15 分钟。</p>
   <section class="card" id="connect-panel">
     <h2>首次连接</h2>
     <p>连接后可以在微信里直接开关，不需要电脑在线。</p>
@@ -23,6 +23,7 @@
     <p class="minor">此凭据只应授权 lvcc-alert 仓库的 Actions 读写与 Contents 只读。请勿填写微信推送密钥或其他仓库的凭据。</p>
   </section>
   <section class="card" id="control-panel" hidden>
+    <h2 class="control-title">当前监控开关</h2>
     <div class="pill" id="state">正在核对状态</div>
     <label for="minutes">这次最多等多久</label>
     <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
@@ -36,6 +37,16 @@
     <button id="disconnect" class="text-button">断开此设备的连接</button>
   </section>
   <p id="message" role="status" aria-live="polite"></p>
-  <p class="footer">运行后约每 5 秒批量查询，有空位再核实具体插座。提醒会写明完整充电桩名称、全部空闲插座编号和检测时间。<br>GitHub 启动可能排队；关闭按钮以任务确认停止为准。</p>
+  <section class="card results-card" id="results" aria-labelledby="results-heading">
+    <h2 id="results-heading">这次发现的插座</h2>
+    <p class="minor" id="result-scope"></p>
+    <p class="result-banner result-warning" id="result-state" role="status" aria-live="polite">连接后查看结果</p>
+    <p class="minor" id="result-message"></p>
+    <div id="result-groups"></div>
+    <p class="minor" id="result-updated"></p>
+    <button class="text-button" id="results-refresh" disabled>刷新这次结果</button>
+    <p class="minor">只跟踪这条提醒最初发现的具体插座，不加入后来的新空位。页面自动刷新；状态同步通常会有十几秒延迟，超过 30 秒没更新会标为过期。</p>
+  </section>
+  <p class="footer">运行后约每 5 秒批量查询，有空位再核实具体插座。提醒写明完整桩名与插座编号，随后继续跟踪 15 分钟，不再重复提醒。<br>GitHub 启动可能排队；关闭按钮控制当前监控，以任务确认停止为准。结果停止更新后仅供查看历史。</p>
 </main></body>
 </html>
