@@ -9,6 +9,7 @@
   let active = [], connected = false, busy = false, pendingStart = null, stopping = false;
   let connectionVersion = 0, refreshVersion = 0, knownRuns = new Set(), refreshInFlight = null;
   let refreshTimer = null;
+  let configuredTargets = [], entryHandled = false, controlKnown = false;
   const requests = new Set();
 
   function scheduleRefresh() {
@@ -26,7 +27,7 @@
     connectionVersion++; refreshVersion++;
     clearTimeout(refreshTimer); refreshTimer = null;
     for (const request of requests) request.abort();
-    connected = false; busy = false; active = []; stopping = false;
+    connected = false; busy = false; active = []; stopping = false; controlKnown = false; entryHandled = false;
     resultView.disconnected();
     controls(false);
     return connectionVersion;
@@ -65,9 +66,10 @@
     const invalidLink = hasLink && !validLink;
     const labels = {free: "空闲", occupied: "已占用", fault: "故障", disabled: "停用", unknown: "未知"};
     const phases = new Set(["searching", "tracking", "ended", "cancelled", "failed"]);
-    const notifications = {not_sent: "尚未提交空位提醒", accepted: "微信提醒已提交", uncertain: "微信提醒未确认成功", test_suppressed: "验证运行，未发送微信提醒"};
+    const notifications = {not_sent: "尚未提交空位提醒", accepted: "微信提醒已提交", uncertain: "微信提醒未确认成功", rejected: "微信提醒未发送成功", test_suppressed: "验证运行，未发送微信提醒"};
     let selected = pinned, latestKnown = false, snapshot = null, runState = null, failure = "";
     let version = 0, inFlight = null, pollTimer = null, expiryTimer = null;
+    let waiting = "";
     const selectionKey = selection => selection ? `${selection.id}-${selection.attempt}` : "";
     const timestamp = value => typeof value === "string" ? Date.parse(value) : NaN;
     const fresh = value => Number.isFinite(timestamp(value)) && Date.now() - timestamp(value) <= 30000
@@ -76,6 +78,9 @@
       ? new Date(value).toLocaleString("zh-CN", {timeZone: "Asia/Taipei", hour12: false}) : "无有效检测时间";
     const clockText = value => Number.isFinite(timestamp(value))
       ? new Date(value).toLocaleTimeString("zh-CN", {timeZone: "Asia/Taipei", hour12: false}) : "未确认";
+    const checking = () => !hasLink && selected?.kind === "check"
+      && (!runState || runState.run_attempt === selected.attempt)
+      && activeStates.has(runState?.status || selected.status);
 
     function clearTimers() {
       clearTimeout(pollTimer); clearTimeout(expiryTimer);
@@ -83,11 +88,36 @@
     }
 
     function validate(data, selection) {
-      if (!data || data.schema_version !== 1 || data.run_id !== selection.id
-          || data.run_attempt !== selection.attempt || !phases.has(data.phase)
+      if (!data || ![1, 2].includes(data.schema_version) || data.run_id !== selection.id
+          || data.run_attempt !== selection.attempt
           || typeof data.verification !== "boolean" || !Object.hasOwn(notifications, data.notification)
-          || typeof data.message !== "string" || !Array.isArray(data.cohort) || data.cohort.length > 32
           || !Number.isFinite(timestamp(data.updated_at))) throw Error("结果内容或会话编号不匹配，暂不显示插座状态。");
+      if (data.schema_version === 2) {
+        if (!["check", "monitor"].includes(data.kind)
+            || !["checking", "monitoring", "snapshot", "ended", "cancelled", "failed"].includes(data.phase)
+            || !Number.isSafeInteger(data.round) || data.round < 0
+            || !Number.isSafeInteger(data.expected_targets) || data.expected_targets < 1 || data.expected_targets > 32
+            || !Array.isArray(data.devices) || data.devices.length > data.expected_targets
+            || !Array.isArray(data.events)) throw Error("全场状态格式异常，暂不能确认空位。");
+        const seen = new Set();
+        for (const device of data.devices) {
+          if (!device || !Number.isSafeInteger(device.device_id) || seen.has(device.device_id)
+              || typeof device.name !== "string" || !device.name || !Array.isArray(device.free)
+              || (device.total !== null && (!Number.isSafeInteger(device.total) || device.total < 1 || device.total > 100))
+              || (device.error !== null && typeof device.error !== "string")
+              || new Set(device.free).size !== device.free.length
+              || device.free.some(port => !Number.isSafeInteger(port) || port < 1 || port > 100 || (device.total !== null && port > device.total))) {
+            throw Error("充电桩状态格式异常，暂不能确认空位。");
+          }
+          seen.add(device.device_id);
+        }
+        for (const event of data.events) {
+          if (!event || !["vacancy", "ended"].includes(event.kind)
+              || !["accepted", "uncertain", "rejected", "test_suppressed"].includes(event.notification)) throw Error("提醒记录格式异常。");
+        }
+        return data;
+      }
+      if (!phases.has(data.phase) || typeof data.message !== "string" || !Array.isArray(data.cohort) || data.cohort.length > 32) throw Error("旧版结果格式异常。");
       const devices = new Set();
       for (const device of data.cohort) {
         if (!device || !Number.isSafeInteger(device.device_id) || devices.has(device.device_id)
@@ -114,17 +144,20 @@
     function render() {
       $("results").hidden = !connected;
       $("target-list").hidden = !connected;
-      $("results-refresh").disabled = !connected || invalidLink || !selected || !!inFlight;
-      $("result-scope").textContent = pinned ? "本条提醒 · 固定查看" : "最近一次查询";
+      $("results-refresh").disabled = !connected || busy || !!inFlight
+        || (hasLink ? invalidLink || !selected : !!pendingStart && !pendingStart.retryAllowed);
+      $("results-refresh").textContent = hasLink || active.length || checking() ? "刷新" : pendingStart?.retryAllowed ? "重试查询" : "重新查询";
+      $("current-view").hidden = !hasLink;
+      $("result-scope").textContent = pinned ? "本条提醒对应的查询" : `全部 ${configuredTargets.length || 15} 台充电桩`;
       $("result-groups").replaceChildren();
       $("result-summary").textContent = ""; $("result-summary").hidden = true;
       $("result-updated").textContent = "";
       $("result-note").textContent = "";
       $("result-state").className = "result-banner result-warning";
       if (invalidLink || !connected || !selected) {
-        $("result-state").textContent = invalidLink ? "结果链接不完整" : !connected ? "连接后查看结果" : latestKnown ? "暂无监控记录" : "正在查找监控记录";
+        $("result-state").textContent = invalidLink ? "结果链接不完整" : !connected ? "连接后查看结果" : waiting || "正在核对当前查询";
         $("result-message").textContent = invalidLink ? "请从微信提醒重新打开。不会切换到其他查询。"
-          : !connected ? "请先连接专用凭据。" : "开启查询后，这里会显示结果。";
+          : !connected ? "请先连接专用凭据。" : "本次结果尚未确认，旧记录不会作为当前空位显示。";
         return;
       }
       if (!snapshot) {
@@ -132,6 +165,8 @@
         $("result-message").textContent = failure || "";
         return;
       }
+      if (snapshot.schema_version === 2) { renderCurrent(); return; }
+      if (!hasLink) $("result-scope").textContent = "旧版监测 · 仅原提醒插座";
       const sameAttempt = runState?.run_attempt === selected.attempt;
       const tracking = snapshot.phase === "tracking" && runState?.status === "in_progress"
         && sameAttempt && timestamp(snapshot.tracking_until) > Date.now();
@@ -193,11 +228,103 @@
       }
     }
 
+    function renderCurrent() {
+      const sameAttempt = runState?.run_attempt === selected.attempt;
+      const monitoring = snapshot.kind === "monitor" && snapshot.phase === "monitoring"
+        && runState?.status === "in_progress" && sameAttempt && timestamp(snapshot.monitoring_until) > Date.now();
+      const checkedOnce = snapshot.kind === "check" && snapshot.phase === "snapshot" && sameAttempt
+        && (runState?.status === "in_progress" || (runState?.status === "completed" && runState.conclusion === "success"));
+      const checkingNow = snapshot.kind === "check" && snapshot.phase === "checking"
+        && runState?.status === "in_progress" && sameAttempt;
+      const current = monitoring || checkedOnce || checkingNow;
+      const sessionFresh = fresh(snapshot.updated_at);
+      const prefix = snapshot.verification ? "验证运行 · " : "";
+      const remaining = Math.max(0, Math.ceil((timestamp(snapshot.monitoring_until) - Date.now()) / 1000));
+      if (failure) {
+        $("result-state").textContent = prefix + "状态未知";
+        $("result-message").textContent = "暂时无法确认当前空位，请稍后刷新。";
+      } else if (!sameAttempt) {
+        $("result-state").textContent = "已停止更新 · 历史记录";
+        $("result-message").textContent = "这是较早一次的查询，不会切换到新一轮。";
+      } else if (snapshot.phase === "checking" && activeStates.has(runState?.status)) {
+        $("result-state").textContent = prefix + "正在查询全部充电桩";
+        $("result-message").textContent = "正在读取本次状态，尚未确认的设备会标为未知。";
+      } else if (!current) {
+        $("result-state").textContent = prefix + ({cancelled: "监测已手动停止", failed: "本次查询异常结束"}[snapshot.phase] || "本次监测已结束") + " · 最后记录";
+        $("result-message").textContent = "以下为保存的最后状态，不代表当前仍然空闲。";
+      } else if (!sessionFresh) {
+        $("result-state").textContent = prefix + "结果已过期 · 当前状态未知";
+        $("result-message").textContent = monitoring ? "超过 30 秒未同步新结果。" : "这次查询已超过 30 秒，请点“重新查询”。";
+      } else {
+        $("result-state").textContent = prefix + (monitoring
+          ? `监测中 · 剩余 ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")} · 第 ${snapshot.round} 轮`
+          : "本次查询结果 · 未开启持续监测");
+        $("result-message").textContent = monitoring ? "新出现的空位会继续微信提醒，期满会发结束通知。" : "有空位可直接前往；也可开启 15 分钟通知。";
+        $("result-state").className = "result-banner result-current";
+      }
+      const byId = new Map(snapshot.devices.map(device => [device.device_id, device]));
+      const rows = !hasLink && configuredTargets.length ? configuredTargets.map(target => {
+        const device = byId.get(target.device_id);
+        return device?.name === target.name ? device : {device_id: target.device_id, name: target.name,
+          total: null, free: [], checked_at: null, error: device ? "设备信息不匹配" : "本轮未取得状态"};
+      }) : snapshot.devices;
+      const valid = device => current && !failure && sessionFresh && fresh(device.checked_at) && !device.error
+        && Number.isSafeInteger(device.total);
+      const freeRows = rows.filter(device => valid(device) && device.free.length);
+      const busyRows = rows.filter(device => valid(device) && !device.free.length);
+      const expected = Math.max(snapshot.expected_targets, rows.length);
+      const unknownCount = expected - freeRows.length - busyRows.length;
+      if (current && !failure && sessionFresh) {
+        const freeCount = freeRows.reduce((count, device) => count + device.free.length, 0);
+        const allBusy = !checkingNow && busyRows.length === expected && unknownCount === 0
+          && (hasLink || expected === configuredTargets.length);
+        $("result-summary").textContent = allBusy ? `${expected} 台全部忙`
+          : freeCount ? `${freeCount} 个空闲 · ${freeRows.length} 台可充${unknownCount ? ` · ${unknownCount} 台未知` : ""}`
+            : `${busyRows.length} 台无空位 · ${unknownCount} 台未知`;
+        $("result-summary").hidden = false;
+        if (checkingNow) $("result-message").textContent = unknownCount
+          ? `已确认的状态先显示，另有 ${unknownCount} 台尚未查清。`
+          : "已取得本轮设备状态，正在完成查询。";
+        else if (allBusy) $("result-message").textContent = monitoring
+          ? "暂时全部无空位，监测会继续，新空位会微信提醒。"
+          : "暂时没有空位，点“有空位通知我”可监测 15 分钟。";
+        else if (!freeCount && unknownCount) $("result-message").textContent = monitoring
+          ? "部分充电桩暂未查清，监测会继续。"
+          : "部分充电桩暂未查清，可继续查询或开启监测。";
+      }
+      const rank = device => valid(device) && device.free.length ? 0 : valid(device) ? 1 : 2;
+      for (const device of rows.map((device, index) => ({device, index})).sort((a, b) => rank(a.device) - rank(b.device) || a.index - b.index).map(item => item.device)) {
+        const group = element("section", "result-device");
+        group.append(element("h3", "result-device-name", device.name));
+        const stale = !sessionFresh || !fresh(device.checked_at);
+        if (valid(device) && device.free.length) {
+          const ports = element("div", "free-ports");
+          for (const number of device.free) ports.append(element("strong", "port-state port-free", `${number} 号空闲`));
+          group.append(ports);
+        } else if (valid(device)) group.append(element("p", "device-status", "暂无空位"));
+        else if (!current && !failure && !device.error && device.checked_at) {
+          group.append(element("p", "device-status", `最后记录：${device.free.length ? device.free.map(number => `${number}号`).join("、") + "空闲" : "无空位"}${stale ? "（已过期）" : ""}`));
+        } else group.append(element("p", "device-status device-unknown", stale && device.checked_at ? "状态未知 · 已过期" : "状态未知"));
+        group.append(element("p", "port-time", `检测 ${timeText(device.checked_at)}`));
+        if (device.error) group.append(element("p", "port-error", device.error));
+        $("result-groups").append(group);
+      }
+      if (rows.length < expected) $("result-groups").append(element("p", "minor", `另有 ${expected - rows.length} 台未取得状态，不能判断为全部忙。`));
+      $("result-updated").textContent = `最近更新 ${timeText(snapshot.updated_at)}${sessionFresh ? "" : "（已过期）"}`;
+      const lastEvent = snapshot.events.at(-1);
+      const eventWarning = lastEvent && ["uncertain", "rejected"].includes(lastEvent.notification)
+        ? (lastEvent.kind === "ended" ? "结束通知" : "空位提醒") + (lastEvent.notification === "uncertain" ? "送达未确认。" : "发送未成功。") : "";
+      if (eventWarning) $("result-message").textContent += " " + eventWarning;
+      $("result-note").textContent = [failure, snapshot.message, eventWarning].filter(Boolean).join(" ");
+    }
+
     function scheduleExpiry() {
       clearTimeout(expiryTimer); expiryTimer = null;
       if (!connected || document.hidden || !snapshot) return;
-      const deadlines = [timestamp(snapshot.updated_at) + 30000, timestamp(snapshot.tracking_until),
-        ...snapshot.cohort.flatMap(device => device.ports.map(port => timestamp(port.checked_at) + 30000))]
+      const checks = snapshot.schema_version === 2 ? snapshot.devices.map(device => device.checked_at)
+        : snapshot.cohort.flatMap(device => device.ports.map(port => port.checked_at));
+      const deadlines = [timestamp(snapshot.updated_at) + 30000, timestamp(snapshot.monitoring_until || snapshot.tracking_until),
+        ...checks.map(value => timestamp(value) + 30000)]
         .filter(value => Number.isFinite(value) && value >= Date.now());
       if (deadlines.length) expiryTimer = setTimeout(() => { render(); scheduleExpiry(); }, Math.max(1, Math.min(...deadlines) - Date.now() + 1));
     }
@@ -255,9 +382,19 @@
         if (hasLink) return;
         latestKnown = true;
         const next = run && digits(String(run.id)) && Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0
-          ? {id: String(run.id), attempt: run.run_attempt} : null;
+          ? {id: String(run.id), attempt: run.run_attempt, status: run.status,
+            kind: run.display_title?.startsWith("查看当前空位") ? "check" : "monitor"} : null;
         if (selectionKey(next) === selectionKey(selected)) { if (!selected) render(); return; }
-        reset(); selected = next; render(); refreshResults();
+        reset(); selected = next; waiting = ""; render(); refreshResults();
+      },
+      waiting(message) { if (!hasLink) { reset(); selected = null; waiting = message; render(); } },
+      isPinned: () => hasLink,
+      checking,
+      observeRuns(runs) {
+        const run = selected && runs.find(item => String(item.id) === selected.id);
+        if (!run || !Number.isSafeInteger(run.run_attempt)) return;
+        if (runState?.status === "completed" && runState.run_attempt === run.run_attempt && run.status !== "completed") return;
+        runState = run;
       },
       visibilityChanged() {
         if (document.hidden) clearTimers();
@@ -268,11 +405,23 @@
     };
   })();
 
-  function controls(known) {
-    $("start").disabled = !connected || !known || busy || (!!pendingStart && !pendingStart.retryAllowed) || active.length > 0 || stopping;
-    $("start").textContent = pendingStart?.retryAllowed ? "重试开启" : "开启";
+  function controls(known = controlKnown) {
+    controlKnown = known;
+    const monitorRetry = pendingStart?.mode === "开始监控" && pendingStart.retryAllowed;
+    $("start").disabled = !connected || !known || busy || (!!pendingStart && !monitorRetry) || active.length > 0 || stopping;
+    $("start").hidden = resultView.isPinned() || active.length > 0 || stopping;
+    $("start").textContent = monitorRetry ? "重试开始监测" : `有空位通知我 · ${$("minutes").value}分钟`;
     $("stop").disabled = !connected || !known || busy || active.length === 0 || stopping;
+    $("stop").hidden = !active.length && !stopping;
     $("minutes").disabled = busy || active.length > 0 || !!pendingStart;
+    resultView.render();
+  }
+
+  function matchesPending(run, pending) {
+    if (!run || run.head_branch !== "main" || !run.display_title?.startsWith(pending.mode)
+        || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1) return false;
+    return pending.runId ? String(run.id) === pending.runId
+      : run.display_title.endsWith(` · req:${pending.requestId}`);
   }
 
   async function refresh() {
@@ -281,39 +430,59 @@
     const connection = connectionVersion, refresh = ++refreshVersion;
     const ticket = refreshInFlight = {connection, version: refresh};
     const current = () => connected && connection === connectionVersion && refresh === refreshVersion && !busy;
+    let autoCheck = false;
     try {
-      const data = await api(WORKFLOW + "/runs?event=workflow_dispatch&per_page=100");
+      const pending = pendingStart;
+      const [data, directRun] = await Promise.all([
+        api(WORKFLOW + "/runs?event=workflow_dispatch&per_page=100"),
+        pending?.runId ? api(`/actions/runs/${pending.runId}`).catch(error => {
+          if (error.status === 404) return null;
+          throw error;
+        }) : Promise.resolve(null),
+      ]);
       if (!current()) return;
       if (!Array.isArray(data.workflow_runs)) throw Error("无法确认任务状态，请稍后刷新。");
+      resultView.observeRuns(data.workflow_runs);
       const watches = data.workflow_runs.filter(run => run.head_branch === "main" && run.display_title?.startsWith("开始监控"));
       active = watches.filter(run => activeStates.has(run.status));
-      resultView.latest(watches[0] || null);
-      if (pendingStart) {
-        const started = watches.find(run => pendingStart.id ? run.id === pendingStart.id : !pendingStart.seenIds.has(run.id) && Date.parse(run.created_at) >= pendingStart.at - 1000);
-        if (started) pendingStart = null;
-        else pendingStart.retryAllowed = Date.now() - pendingStart.at >= 90000;
+      if (pending && pending === pendingStart) {
+        const started = matchesPending(directRun, pending) ? directRun
+          : data.workflow_runs.find(run => matchesPending(run, pending));
+        if (started) {
+          pendingStart = null;
+          if (pending.mode === "开始监控" && activeStates.has(started.status) && !active.some(run => run.id === started.id)) active.unshift(started);
+          if (!resultView.isPinned()) resultView.latest(pending.mode === "开始监控" ? started : active[0] || started);
+        } else {
+          pending.retryAllowed = Date.now() - pending.at >= 90000;
+          if (!resultView.isPinned()) resultView.waiting(pending.retryAllowed ? "尚未确认本次查询 · 可手动重试" : "正在等候本次查询启动");
+        }
+      }
+      if (!resultView.isPinned() && active.length && pendingStart?.mode !== "开始监控") {
+        entryHandled = true; resultView.latest(active[0]);
+      }
+      if (!resultView.isPinned() && !entryHandled && !pendingStart) {
+        entryHandled = true;
+        autoCheck = active.length === 0;
       }
       knownRuns = new Set(watches.map(run => run.id));
       if (stopping && active.length === 0) stopping = false;
       $("detail").hidden = false;
       if (stopping) {
-        $("state").textContent = "正在关闭";
-        $("detail").textContent = "已请求停止，正在等待 GitHub 确认。";
+        $("state").textContent = "正在停止监测";
+        $("detail").textContent = "已请求停止，正在等待确认。";
       } else if (pendingStart) {
-        $("state").textContent = pendingStart.retryAllowed ? "未确认启动" : "正在确认启动";
+        $("state").textContent = pendingStart.retryAllowed ? "启动未确认" : "正在等候启动";
         $("detail").textContent = pendingStart.retryAllowed
-          ? "超过 90 秒仍未找到任务。可点击“重试开启”，不会自动重发。"
-          : "等待 GitHub 创建任务。暂时不要重复点击。";
+          ? "超过 90 秒仍未找到本次任务。请手动重试，不会自动重复提交。"
+          : "正在等待 GitHub 分配运行环境。";
       } else if (active.length) {
         const running = active.some(run => run.status === "in_progress");
-        $("state").textContent = running ? "监控运行中" : "等待 GitHub 启动";
-        $("detail").textContent = running ? "发现空位发一次微信，并继续跟踪这些插座 15 分钟。" : "任务已提交，GitHub 正在排队分配运行环境。";
+        $("state").textContent = running ? "正在持续监测" : "监测排队中";
+        $("detail").textContent = "全程查询全部设备，新出现的空位会微信提醒。";
         $("detail").hidden = running;
       } else {
-        $("state").textContent = "已关闭";
-        const failed = watches[0]?.conclusion === "failure";
-        $("detail").textContent = failed ? "上一轮异常结束，请查看微信绑定或任务记录。" : "当前没有正在运行的查询。";
-        $("detail").hidden = !failed;
+        $("state").textContent = "未开启通知";
+        $("detail").textContent = ""; $("detail").hidden = true;
       }
       $("message").textContent = "";
       controls(true);
@@ -323,11 +492,57 @@
       $("message").textContent = error.message;
       controls(false);
     } finally {
-      if (refreshInFlight === ticket) {
-        refreshInFlight = null;
-        scheduleRefresh();
+      if (refreshInFlight === ticket) { refreshInFlight = null; scheduleRefresh(); }
+    }
+    if (autoCheck && connected && connection === connectionVersion && !busy && !pendingStart) await dispatchMode("查看当前空位");
+  }
+
+  function requestId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return "lvcc-" + Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function dispatchMode(mode) {
+    if (!connected || !controlKnown || busy || stopping || (pendingStart && !pendingStart.retryAllowed)) return;
+    if (mode === "开始监控" && active.length) return;
+    const connection = connectionVersion;
+    refreshVersion++; busy = true; entryHandled = true;
+    const pending = {mode, requestId: requestId(), at: Date.now(), retryAllowed: false};
+    pendingStart = pending;
+    let actionError = "";
+    if (!resultView.isPinned()) resultView.waiting(mode === "开始监控" ? "正在提交监测" : "正在查询当前全部充电桩");
+    $("state").textContent = mode === "开始监控" ? "正在提交监测" : "正在提交当前查询";
+    $("detail").hidden = false;
+    $("detail").textContent = mode === "开始监控" ? "开启请求尚未确认。" : "本次只查询一次，不会发送微信通知。";
+    $("message").textContent = "";
+    controls(true);
+    try {
+      const result = await api(WORKFLOW + "/dispatches", "POST", {ref: "main", return_run_details: true,
+        inputs: {mode, minutes: $("minutes").value, request_id: pending.requestId}});
+      if (connection === connectionVersion && result?.workflow_run_id && /^[1-9]\d*$/.test(String(result.workflow_run_id))) {
+        pending.runId = String(result.workflow_run_id);
+      }
+    } catch (error) {
+      if (connection === connectionVersion) {
+        actionError = error.message;
+        if (error.status >= 400 && error.status < 500) {
+          pendingStart = null;
+          if (!resultView.isPinned()) resultView.waiting("本次查询未能提交 · 请手动重试");
+        }
+      }
+    } finally {
+      if (connection === connectionVersion) {
+        busy = false; await refresh();
+        if (connection === connectionVersion && actionError) $("message").textContent = actionError;
       }
     }
+  }
+
+  async function checkCurrent() {
+    if (resultView.isPinned()) return resultView.refresh();
+    if (active.length) { resultView.latest(active[0]); return resultView.refresh(); }
+    if (resultView.checking()) return resultView.refresh();
+    return dispatchMode("查看当前空位");
   }
 
   async function connect(save, candidate = key) {
@@ -341,6 +556,7 @@
       const raw = Uint8Array.from(atob(file.content.replace(/\s/g, "")), c => c.charCodeAt(0));
       const targets = JSON.parse(new TextDecoder().decode(raw));
       if (!Array.isArray(targets) || !targets.length) throw Error("尚未配置监控目标。");
+      configuredTargets = targets;
       $("targets").replaceChildren();
       for (const target of targets) {
         const item = document.createElement("p"); item.className = "target"; item.textContent = target.name;
@@ -366,35 +582,8 @@
 
   $("connect").addEventListener("click", () => connect(true, $("access-key").value.trim()));
 
-  $("start").addEventListener("click", async () => {
-    if (!connected || busy || active.length || stopping || (pendingStart && !pendingStart.retryAllowed)) return;
-    const connection = connectionVersion;
-    refreshVersion++; busy = true; let actionError = "";
-    const pending = {at: Date.now(), seenIds: new Set(knownRuns), retryAllowed: false};
-    pendingStart = pending; controls(true);
-    $("state").textContent = "正在提交开启";
-    $("detail").hidden = false;
-    $("detail").textContent = "正在向 GitHub 发送开启请求，任务尚未确认启动。";
-    $("message").textContent = "";
-    try {
-      const result = await api(WORKFLOW + "/dispatches", "POST", {ref: "main", inputs: {mode: "开始监控", minutes: $("minutes").value}});
-      if (connection === connectionVersion) {
-        pending.id = result?.workflow_run_id;
-        $("state").textContent = "正在确认启动";
-        $("detail").textContent = "开启请求已提交，正在等待 GitHub 创建任务。";
-      }
-    } catch (error) {
-      if (connection === connectionVersion) {
-        actionError = error.message;
-        if (error.status >= 400 && error.status < 500) pendingStart = null;
-      }
-    } finally {
-      if (connection === connectionVersion) {
-        busy = false; await refresh();
-        if (connection === connectionVersion && actionError) $("message").textContent = actionError;
-      }
-    }
-  });
+  $("start").addEventListener("click", () => dispatchMode("开始监控"));
+  $("minutes").addEventListener("change", () => controls());
 
   $("stop").addEventListener("click", async () => {
     if (!connected || busy || !active.length) return;
@@ -424,7 +613,7 @@
   });
 
   $("refresh").addEventListener("click", refresh);
-  $("results-refresh").addEventListener("click", resultView.refresh);
+  $("results-refresh").addEventListener("click", checkCurrent);
   $("disconnect").addEventListener("click", () => {
     invalidateConnection();
     sessionStorage.removeItem(KEY_NAME); localStorage.removeItem(KEY_NAME); key = ""; connected = false;

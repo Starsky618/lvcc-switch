@@ -10,8 +10,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>充电空位</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=20261010-4a">
-  <script src="app.js?v=20261010-4a" defer></script>
+  <link rel="stylesheet" href="style.css?v=20261011-5">
+  <script src="app.js?v=20261011-5" defer></script>
 </head>
 <body><main>
   <header class="page-header"><h1>充电空位</h1></header>
@@ -25,8 +25,8 @@
   </section>
   <section class="monitor-bar" id="control-panel" aria-label="当前查询开关" hidden>
     <div class="control-row">
-      <div class="control-status"><span class="minor">当前查询</span><span class="pill" id="state">正在核对</span></div>
-      <div class="actions"><button id="start" disabled>开启</button><button id="stop" class="secondary" disabled>关闭</button></div>
+      <div class="control-status"><span class="minor">微信通知监测</span><span class="pill" id="state">正在核对</span></div>
+      <div class="actions"><button id="stop" class="secondary" disabled hidden>停止监测</button></div>
     </div>
     <p id="detail" class="minor" hidden></p>
   </section>
@@ -38,18 +38,21 @@
     <p class="result-banner result-warning" id="result-state" role="status" aria-live="polite">连接后查看结果</p>
     <p class="minor" id="result-message"></p>
     <p class="minor" id="result-updated"></p>
+    <a class="current-link" id="current-view" href="/lvcc-switch/" hidden>查看现在全部充电桩</a>
+    <button class="monitor-start" id="start" disabled>有空位通知我 · 15分钟</button>
     <div id="result-groups"></div>
   </section>
   <details class="card settings" id="target-list" hidden>
     <summary>设置</summary>
-    <label for="minutes">开启后最多等待多久</label>
-    <select id="minutes"><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60" selected>1 小时</option><option value="120">2 小时</option></select>
+    <label for="minutes">持续监测多久</label>
+    <select id="minutes"><option value="15" selected>15 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="120">2 小时</option></select>
     <p class="settings-label" id="target-summary">监控设备名单</p>
     <div id="targets"></div>
     <button id="refresh" class="text-button">刷新当前查询状态</button>
     <button id="disconnect" class="text-button">断开此设备</button>
-    <p class="minor">关闭按钮停止当前查询；旧消息始终显示原来的记录。关闭网页不会停止查询。</p>
-    <p class="minor">发现空位提醒一次，再跟踪这条提醒最初发现的插座 15 分钟，不加入新的空位。</p>
+    <p class="minor">打开入口会查询全部设备，不会自动开启微信通知。有监测运行时直接显示它。</p>
+    <p class="minor">开启后全程扫描全部设备，每批新空位会微信提醒，期满会发送结束通知。可随时停止；关闭网页不会停止监测。</p>
+    <p class="minor">旧通知固定查看对应记录，点“查看现在全部充电桩”可重新查询。</p>
     <p class="minor">页面自动刷新；状态同步通常会有十几秒延迟，超过 30 秒没更新会标为过期。GitHub 启动可能排队。</p>
     <p class="minor">桌面直达：Safari → 分享 → 添加到主屏幕。</p>
     <p class="minor" id="result-note"></p>
