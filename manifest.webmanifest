@@ -2,7 +2,7 @@
   "id": "/lvcc-switch/",
   "name": "充电空位",
   "short_name": "充电空位",
-  "description": "微信提醒、充电插座动态状态与查询开关",
+  "description": "明向校区充电空位共享查询，打开即可查看当前空闲插座",
   "lang": "zh-CN",
   "start_url": "/lvcc-switch/",
   "scope": "/lvcc-switch/",

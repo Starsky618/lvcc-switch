@@ -7,55 +7,31 @@
   <meta name="theme-color" content="#28744a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="充电空位">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-  <title>充电空位</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://appapi.lvcchong.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>明向充电空位</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=20261011-5">
-  <script src="app.js?v=20261011-5" defer></script>
+  <link rel="stylesheet" href="style.css?v=20261015-1">
+  <script src="site-config.js?v=20261015-1" defer></script>
+  <script src="query.js?v=20261015-1" defer></script>
+  <script src="app.js?v=20261015-1" defer></script>
 </head>
 <body><main>
-  <header class="page-header"><h1>充电空位</h1></header>
-  <section class="card" id="connect-panel">
-    <h2>连接后查看插座</h2>
-    <label for="access-key">专用连接凭据</label>
-    <input id="access-key" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_ 开头">
-    <label class="check"><input id="remember" type="checkbox">在这台设备上记住连接</label>
-    <button id="connect">连接并查看</button>
-    <p class="minor">仅使用 lvcc-alert 仓库的专用凭据（Actions 读写、Contents 只读），不要填写微信推送密钥。</p>
-  </section>
-  <section class="monitor-bar" id="control-panel" aria-label="当前查询开关" hidden>
-    <div class="control-row">
-      <div class="control-status"><span class="minor">微信通知监测</span><span class="pill" id="state">正在核对</span></div>
-      <div class="actions"><button id="stop" class="secondary" disabled hidden>停止监测</button></div>
-    </div>
-    <p id="detail" class="minor" hidden></p>
-  </section>
-  <p id="message" role="status" aria-live="polite"></p>
-  <section class="card results-card" id="results" aria-labelledby="results-heading" hidden>
-    <h2 class="sr-only" id="results-heading">这次插座状态</h2>
-    <div class="result-head"><p class="minor" id="result-scope"></p><button class="text-button" id="results-refresh" disabled>刷新</button></div>
-    <p class="results-summary" id="result-summary" hidden></p>
-    <p class="result-banner result-warning" id="result-state" role="status" aria-live="polite">连接后查看结果</p>
-    <p class="minor" id="result-message"></p>
+  <header class="page-header"><h1>充电空位</h1><p class="minor">明向校区 · 打开就能查</p></header>
+  <p class="result-banner result-warning" id="legacy-link-note" hidden>这是旧提醒链接。此入口已切换为当前空位查询，下面显示现在重新查询的结果，不是原提醒的历史记录。</p>
+  <section class="card results-card" id="results" aria-labelledby="results-heading" aria-busy="true">
+    <h2 class="sr-only" id="results-heading">当前插座状态</h2>
+    <div class="result-head"><p class="minor" id="result-scope">明向校区</p><button class="text-button" id="results-refresh" disabled>查询中…</button></div>
+    <p class="results-summary" id="result-summary" role="status" aria-live="polite">正在查询空位</p>
+    <p class="result-banner result-current" id="result-state">正在读取本次状态。</p>
     <p class="minor" id="result-updated"></p>
-    <a class="current-link" id="current-view" href="/lvcc-switch/" hidden>查看现在全部充电桩</a>
-    <button class="monitor-start" id="start" disabled>有空位通知我 · 15分钟</button>
     <div id="result-groups"></div>
   </section>
-  <details class="card settings" id="target-list" hidden>
-    <summary>设置</summary>
-    <label for="minutes">持续监测多久</label>
-    <select id="minutes"><option value="15" selected>15 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="120">2 小时</option></select>
-    <p class="settings-label" id="target-summary">监控设备名单</p>
-    <div id="targets"></div>
-    <button id="refresh" class="text-button">刷新当前查询状态</button>
-    <button id="disconnect" class="text-button">断开此设备</button>
-    <p class="minor">打开入口会查询全部设备，不会自动开启微信通知。有监测运行时直接显示它。</p>
-    <p class="minor">开启后全程扫描全部设备，每批新空位会微信提醒，期满会发送结束通知。可随时停止；关闭网页不会停止监测。</p>
-    <p class="minor">旧通知固定查看对应记录，点“查看现在全部充电桩”可重新查询。</p>
-    <p class="minor">页面自动刷新；状态同步通常会有十几秒延迟，超过 30 秒没更新会标为过期。GitHub 启动可能排队。</p>
-    <p class="minor">桌面直达：Safari → 分享 → 添加到主屏幕。</p>
-    <p class="minor" id="result-note"></p>
-  </details>
+  <section class="card refresh-settings" aria-label="刷新设置">
+    <label class="check" for="auto-refresh"><input id="auto-refresh" type="checkbox">页面打开时自动刷新</label>
+    <p class="minor" id="auto-status">自动刷新已关闭</p>
+    <p class="minor">切到后台会暂停；关闭页面就停止查询。此页面不发送微信提醒。</p>
+  </section>
+  <p class="footer">空闲状态来自驴充充，实际以现场为准。暂不提供已充时长或充满时间预测。</p>
+  <noscript><p class="result-banner result-warning">需要开启 JavaScript 才能查询空位。</p></noscript>
 </main></body>
 </html>
